@@ -167,6 +167,19 @@ kbd { display: inline-block; padding: 0 5px; border-radius: 4px; background: rgb
 .owned { font-size: 12px; color: var(--muted); }
 .buy { background: linear-gradient(180deg, #ffad55, #f07f22); color: #241303; border-color: #ffbe7a; }
 
+/* admin panel */
+#admin { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: auto; background: rgba(0,0,0,0.35); z-index: 12; padding: 16px; }
+.admin-card { width: min(380px, 100%); padding: 16px; border-color: rgba(255, 201, 51, 0.6); }
+.admin-card.shake { animation: shake .4s; }
+@keyframes shake { 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
+.admin-head { display: flex; justify-content: space-between; align-items: center; font-size: 17px; }
+.admin-row { display: flex; gap: 8px; margin-top: 8px; }
+#admin-pw { flex: 1; min-width: 0; padding: 9px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.08); color: var(--text); font: 600 18px system-ui; letter-spacing: 4px; }
+#admin-error { min-height: 18px; margin-top: 6px; color: #ff9b9b; font-weight: 700; font-size: 13px; }
+.admin-ok { color: #7dffb0; font-weight: 700; }
+.gold-btn { background: linear-gradient(180deg, #ffe27a, #e0a800); border-color: #fff0b0; color: #3a2800; }
+.kart-card { border-color: rgba(79,195,247,0.5); }
+
 /* online co-op */
 #room-panel { position: absolute; top: 176px; left: 14px; width: 290px; padding: 8px 12px; pointer-events: auto; }
 .rp-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
@@ -1148,6 +1161,7 @@ kbd { display: inline-block; padding: 0 5px; border-radius: 4px; background: rgb
         <li><kbd>Drag mouse</kbd> look · <kbd>Wheel</kbd> zoom</li>
         <li><kbd>E</kbd> enter/leave shelter · <kbd>F</kbd> repair</li>
         <li><kbd>B</kbd> shop · <kbd>1-4</kbd> answer quiz · <kbd>Esc</kbd> pause</li>
+        <li><kbd>E</kbd> by a go-kart to drive · grab 🪙 sky coins · <kbd>M</kbd> admin</li>
       </ul>
     </div>
 
@@ -1173,6 +1187,25 @@ kbd { display: inline-block; padding: 0 5px; border-radius: 4px; background: rgb
         <button id="shop-close" class="btn">✕ Close</button>
       </div>
       <div id="shop-grid"></div>
+    </div>
+
+    <div id="admin" class="hidden">
+      <div class="admin-card panel">
+        <div class="admin-head"><b>🔐 Admin Panel</b><button id="admin-close" class="btn small">✕</button></div>
+        <div id="admin-lock">
+          <p class="mini">Enter the admin password.</p>
+          <div class="admin-row">
+            <input id="admin-pw" type="password" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="Password">
+            <button id="admin-unlock" class="btn primary">Unlock</button>
+          </div>
+          <div id="admin-error"></div>
+        </div>
+        <div id="admin-tools" class="hidden">
+          <p class="admin-ok">✅ Admin unlocked: your Gold Go-Kart has been delivered!</p>
+          <button id="admin-gold" class="btn gold-btn big">🏆 Get another Gold Go-Kart</button>
+          <p class="mini">The Gold Go-Kart is the fastest kart on the island, and it leaves a trail of gold sparks. It can't be bought in the shop.</p>
+        </div>
+      </div>
     </div>
 
     <div id="dev" class="panel hidden">
@@ -55692,9 +55725,9 @@ const BALANCE = {
   quizInterval: 60,        // seconds between quizzes (paused while a question is open)
   playerMaxHp: 100,
   playerRegen: 2,          // HP per second while no disaster is active
-  firstPrepTime: 120,
-  prepTime: 80,
-  minPrepTime: 50,
+  firstPrepTime: 120,      // 2 minutes before the first earthquake
+  prepTime: 300,           // 5 minutes to prepare between rounds
+  quakeDuration: 120,      // every main earthquake shakes for 2 minutes
   repairCostFactor: 0.6,   // full repair costs 60% of the price, scaled by missing HP
 };
 
@@ -55707,7 +55740,7 @@ function roundParams(round) {
     damageMult: 1 + 0.12 * r,
     tsunamiScale: 1 + 0.08 * r,
     warningTime: Math.max(18, 34 - 2 * r),
-    prepTime: r === 0 ? BALANCE.firstPrepTime : Math.max(BALANCE.minPrepTime, BALANCE.prepTime - 5 * (r - 1)),
+    prepTime: r === 0 ? BALANCE.firstPrepTime : BALANCE.prepTime,
     aftershocks: Math.min(1 + Math.floor(r / 2), 4),
   };
 }
@@ -57335,6 +57368,7 @@ class Player {
     this.onGround = true;
     this.swimming = false;
     this.shelter = null;
+    this.vehicle = null; // the go-kart being driven
     this.walkPhase = 0;
     this.hurtFlash = 0;
     this.godMode = false;
@@ -57355,8 +57389,27 @@ class Player {
     this.hp = this.maxHp;
     this.alive = true;
     this.shelter = null;
+    this.vehicle = null;
     this.mesh.visible = true;
     this.mesh.rotation.set(0, 0, 0);
+  }
+
+  enterKart(k) {
+    this.vehicle = k;
+    this.vel.set(0, 0, 0);
+    this.game.audio.play('click');
+  }
+
+  exitKart() {
+    const k = this.vehicle;
+    if (!k) return;
+    this.vehicle = null;
+    k.speed = 0;
+    // step out on the driver's left
+    const x = k.pos.x + Math.cos(k.yaw) * 1.7, z = k.pos.z - Math.sin(k.yaw) * 1.7;
+    this.pos.set(x, Math.max(this.game.world.heightAt(x, z), waterLevelAt(x, z) - 1.2), z);
+    this.mesh.rotation.set(0, this.yaw, 0);
+    this.game.audio.play('click');
   }
 
   get feetY() { return this.shelter ? this.shelter.floorY : this.pos.y; }
@@ -57387,6 +57440,7 @@ class Player {
     if (this.hp <= 0) {
       this.alive = false;
       if (this.shelter) this.exit();
+      if (this.vehicle) this.exitKart();
       this.game.onPlayerDeath(source);
     }
   }
@@ -57399,6 +57453,19 @@ class Player {
     if (!this.alive) {
       // fallen over
       this.mesh.rotation.x = Math.min(Math.PI / 2, this.mesh.rotation.x + dt * 3);
+      return;
+    }
+    if (this.vehicle) {
+      const k = this.vehicle;
+      k.update(dt, canMove ? input : null);
+      k.seatWorld(this.pos);
+      this.yaw = k.yaw;
+      this.swimming = false;
+      this.mesh.position.copy(this.pos);
+      this.mesh.quaternion.copy(k.group.quaternion);
+      // seated: legs forward, hands on the wheel
+      this.legs[0].rotation.x = this.legs[1].rotation.x = -1.45;
+      this.arms[0].rotation.x = this.arms[1].rotation.x = -1.0;
       return;
     }
     if (this.shelter) {
@@ -57505,7 +57572,7 @@ __m['src/disasters.js'] = (() => {
 //     authority) decides phase changes and damages structures. Any client can take over as host from room.state.
 // Every client damages only its own player.
 
-const { roundParams } = __m['src/config.js'];
+const { roundParams, BALANCE } = __m['src/config.js'];
 const { TSU, tsunamiAt } = __m['src/water.js'];
 const { rand, smooth, clamp, lerp } = __m['src/noise.js'];
 
@@ -57567,11 +57634,14 @@ class DisasterManager {
   quakeSpec(round) {
     const p = roundParams(round), now = this.now();
     const M = +rand(p.magMin, p.magMax).toFixed(1);
-    const dur = +(12 + (M - 6) * 5).toFixed(2);
+    // Every main quake shakes for 2 minutes. Its total damage stays what a short quake of this magnitude
+    // would do (`ref` seconds of full shaking), spread out over the 2 minutes as waves of stronger surges.
+    const dur = BALANCE.quakeDuration;
+    const ref = 12 + (M - 6) * 5;
     const after = [];
     for (let i = 0; i < p.aftershocks; i++) after.push({ at: Math.round(now + (dur + rand(4, p.warningTime + 25)) * 1000), M: +(M - rand(1.0, 2.2)).toFixed(1), dur: +rand(4, 8).toFixed(1) });
     return {
-      round, phase: 'quake', startAt: now, qAt: now, dur, M,
+      round, phase: 'quake', startAt: now, qAt: now, dur, M, endsAt: now + dur * 1000, dmgK: +(ref / dur).toFixed(4),
       srcA: +rand(0, Math.PI * 2).toFixed(3), dist: Math.round(rand(20, 90)),
       H: +clamp(((M - 6) * 7 + rand(5, 9)) * p.tsunamiScale, 6, 34).toFixed(1),
       after,
@@ -57608,14 +57678,15 @@ class DisasterManager {
       TSU.on = false; TSU.recede = 1;
       g.world.weather.forced = null;
       if (prev.endsWith(':clear') || (s.round > 1 && fresh)) {
-        g.ui.news('ROUND ' + s.round, `Calm returns... for now. Scientists warn that the next earthquake could be stronger. ${Math.round(this.timer)} seconds to prepare.`, 'info');
+        const left = this.timer >= 90 ? `${Math.round(this.timer / 60)} minutes` : `${Math.round(this.timer)} seconds`;
+        g.ui.news('ROUND ' + s.round, `Calm returns... for now. Scientists warn that the next earthquake could be stronger. You have ${left} to prepare.`, 'info');
       }
       g.onRoundStart?.(s.round);
     } else if (s.phase === 'quake') {
       const desc = s.M < 6.5 ? 'Strong shaking is expected. Weak structures may be damaged.'
         : s.M < 7.5 ? 'Major shaking is expected across the island. Get away from weak buildings!'
         : 'A GREAT earthquake! Violent shaking. Expect heavy destruction.';
-      g.ui.news('BREAKING NEWS', `A magnitude ${s.M.toFixed(1)} earthquake has struck ${s.dist} km ${compass(Math.cos(s.srcA), Math.sin(s.srcA))} of the island! ${desc}`, 'quake');
+      g.ui.news('BREAKING NEWS', `A magnitude ${s.M.toFixed(1)} earthquake has struck ${s.dist} km ${compass(Math.cos(s.srcA), Math.sin(s.srcA))} of the island! ${desc} The shaking could last ${Math.round(s.dur / 60)} minutes.`, 'quake');
       g.world.weather.forced = 'cloudy';
     } else if (s.phase === 'warning' || s.phase === 'tsunami' || s.phase === 'recede') {
       TSU.dirX = -Math.cos(s.srcA); TSU.dirZ = -Math.sin(s.srcA); TSU.H = s.H;
@@ -57671,7 +57742,7 @@ class DisasterManager {
     }
     if (cur.qAt && cur.round === this.round) {
       const t = (now - cur.qAt) / 1000;
-      if (t >= 0 && t < cur.dur) this.activateQuake('main', { M: cur.M, dur: cur.dur, t, main: true, seed: cur.srcA * 10 });
+      if (t >= 0 && t < cur.dur) this.activateQuake('main', { M: cur.M, dur: cur.dur, t, main: true, seed: cur.srcA * 10, k: cur.dmgK ?? 1, surges: true });
       (cur.after || []).forEach((a, i) => {
         const ta = (now - a.at) / 1000;
         if (ta >= 0 && ta < a.dur) this.activateQuake('after' + i, { M: a.M, dur: a.dur, t: ta, main: false, seed: i * 7 + 3 }, () =>
@@ -57681,11 +57752,14 @@ class DisasterManager {
 
     let shake = 0, S = 0, debrisRate = 0;
     for (const q of this.quakes) {
-      const env = smooth(0, 2, q.t) * (1 - smooth(q.dur - 4, q.dur, q.t));
+      let env = smooth(0, 2, q.t) * (1 - smooth(q.dur - 4, q.dur, q.t));
+      // long quakes roll in waves: calmer stretches between violent surges
+      if (q.surges) env *= 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(q.t * 0.42 + q.seed) * Math.sin(q.t * 0.13 + 1.3));
       const wob = 0.8 + 0.2 * Math.sin(q.t * 7.3 + q.seed) * Math.sin(q.t * 2.1);
+      const k = q.k ?? 1;
       shake = Math.max(shake, env * clamp((q.M - 4) / 4.5, 0.12, 1) * wob);
-      S += Math.max(0, q.M - 5) ** 2 * env * wob;
-      debrisRate += Math.max(0, q.M - 5.5) * env;
+      S += Math.max(0, q.M - 5) ** 2 * env * wob * k;
+      debrisRate += Math.max(0, q.M - 5.5) * env * Math.min(1, k * 1.5);
     }
     this.intensity = shake;
     if (S > 0) this.applyQuake(dt, S, debrisRate);
@@ -58210,6 +58284,15 @@ class AudioSys {
     const sf = ctx.createBiquadFilter(); sf.type = 'lowpass'; sf.frequency.value = 1800;
     this.sirenG = ctx.createGain(); this.sirenG.gain.value = 0;
     this.siren.connect(sf); sf.connect(this.sirenG); this.sirenG.connect(this.sfxBus); this.siren.start();
+
+    // go-kart engine: two detuned sawtooths through a lowpass, pitch follows speed
+    this.engA = ctx.createOscillator(); this.engA.type = 'sawtooth';
+    this.engB = ctx.createOscillator(); this.engB.type = 'square';
+    const ef = ctx.createBiquadFilter(); ef.type = 'lowpass'; ef.frequency.value = 900;
+    this.engG = ctx.createGain(); this.engG.gain.value = 0;
+    this.engA.connect(ef); this.engB.connect(ef); ef.connect(this.engG); this.engG.connect(this.sfxBus);
+    this.engA.frequency.value = 55; this.engB.frequency.value = 27.5;
+    this.engA.start(); this.engB.start();
   }
 
   applyVolume() {
@@ -58235,6 +58318,12 @@ class AudioSys {
     this.sirenG.gain.setTargetAtTime(env.siren * 0.07, t, 0.3);
     this.rush.g.gain.setTargetAtTime(env.rush * 0.6, t, 0.2);
     this.rush.f.frequency.setTargetAtTime(400 + env.rush * 500, t, 0.3);
+    const e = env.engine ?? -1; // -1 = not driving
+    this.engG.gain.setTargetAtTime(e < 0 ? 0 : 0.035 + e * 0.05, t, 0.1);
+    if (e >= 0) {
+      this.engA.frequency.setTargetAtTime(55 + e * 130, t, 0.08);
+      this.engB.frequency.setTargetAtTime(27.5 + e * 65 + 1.5, t, 0.08);
+    }
   }
 
   distGain(opts) {
@@ -58308,12 +58397,231 @@ class AudioSys {
 return { AudioSys };
 })();
 
+// ===== src/karts.js =====
+__m['src/karts.js'] = (() => {
+// Go-karts: buy one in the shop for 20 coins (random colour, never gold), or unlock the Gold Go-Kart
+// in the admin panel. Drive with W/S to accelerate/brake, A/D to steer, Space to handbrake, E to get in/out.
+
+const { waterLevelAt, TSU } = __m['src/water.js'];
+const { clamp, rand } = __m['src/noise.js'];
+
+const KART_PRICE = 20;
+const GOLD_COLOR = '#ffc933';
+const MAX_KARTS = 8;
+const out = { crest: 0 };
+const SEAT = new THREE.Vector3(0, -0.3, -0.25); // where the driver's feet-origin sits in kart space
+
+// Any bright colour except the gold/yellow-orange hues, which are reserved for the Gold Go-Kart.
+function randomKartColor() {
+  let h;
+  do { h = Math.random() * 360; } while (h >= 26 && h <= 68); // gold is ~45°; keep well clear of it
+  return '#' + new THREE.Color().setHSL(h / 360, rand(0.65, 0.9), rand(0.4, 0.55)).getHexString();
+}
+
+function buildKartModel(color, gold = false) {
+  const g = new THREE.Group();
+  const std = (c, o = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.5, metalness: 0.2, ...o });
+  // the scene has no reflection map, so "gold" stays bright with moderate metalness plus a warm glow
+  const body = gold ? std(GOLD_COLOR, { metalness: 0.5, roughness: 0.25, emissive: '#b07800', emissiveIntensity: 0.45 }) : std(color, { metalness: 0.3, roughness: 0.4 });
+  const dark = std('#26292d'), tire = std('#141414', { roughness: 0.95 }), seat = std('#2f2f35'), chrome = std('#d6d9dd', { metalness: 0.85, roughness: 0.25 });
+  const add = (geo, mat, x, y, z, parent = g) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; parent.add(m); return m; };
+  add(new THREE.BoxGeometry(1.45, 0.16, 2.3), body, 0, 0.3, 0);
+  add(new THREE.BoxGeometry(1.1, 0.26, 0.6), body, 0, 0.38, 1.2);
+  add(new THREE.BoxGeometry(0.26, 0.3, 1.2), body, 0.68, 0.44, 0);
+  add(new THREE.BoxGeometry(0.26, 0.3, 1.2), body, -0.68, 0.44, 0);
+  add(new THREE.BoxGeometry(1.4, 0.12, 0.16), dark, 0, 0.33, 1.55);
+  add(new THREE.BoxGeometry(1.6, 0.14, 0.16), dark, 0, 0.36, -1.28);
+  add(new THREE.BoxGeometry(0.6, 0.12, 0.6), seat, 0, 0.5, -0.25);
+  add(new THREE.BoxGeometry(0.6, 0.62, 0.12), seat, 0, 0.8, -0.56);
+  add(new THREE.BoxGeometry(0.72, 0.36, 0.42), dark, 0, 0.56, -1.0);
+  for (const x of [-0.2, 0.2]) { const p = add(new THREE.CylinderGeometry(0.06, 0.06, 0.4, 8), chrome, x, 0.66, -1.32); p.rotation.x = Math.PI / 2; }
+  const col = add(new THREE.CylinderGeometry(0.035, 0.035, 0.5, 6), dark, 0, 0.66, 0.48); col.rotation.x = 0.9;
+  const wheel = add(new THREE.TorusGeometry(0.17, 0.035, 6, 16), dark, 0, 0.84, 0.3); wheel.rotation.x = 0.75;
+  if (gold) {
+    add(new THREE.BoxGeometry(1.5, 0.06, 0.34), body, 0, 1.05, -1.25);
+    for (const x of [-0.6, 0.6]) add(new THREE.BoxGeometry(0.06, 0.32, 0.2), body, x, 0.88, -1.25);
+    add(new THREE.OctahedronGeometry(0.16), std('#fff2b0', { emissive: '#ffd34d', emissiveIntensity: 1 }), 0, 0.62, 1.52);
+  }
+  const wheels = [], fronts = [];
+  for (const [x, z] of [[0.82, 0.85], [-0.82, 0.85], [0.82, -0.85], [-0.82, -0.85]]) {
+    const pivot = new THREE.Group(); pivot.position.set(x, 0.28, z); g.add(pivot);
+    const w = add(new THREE.CylinderGeometry(0.28, 0.28, z > 0 ? 0.22 : 0.3, 14), tire, 0, 0, 0, pivot);
+    w.rotation.z = Math.PI / 2;
+    add(new THREE.CylinderGeometry(0.13, 0.13, z > 0 ? 0.24 : 0.32, 10), chrome, 0, 0, 0, pivot).rotation.z = Math.PI / 2;
+    wheels.push(pivot);
+    if (z > 0) fronts.push(pivot);
+  }
+  return { group: g, wheels, fronts };
+}
+
+class Kart {
+  constructor(game, color, gold, x, z, yaw) {
+    this.game = game;
+    this.color = color; this.gold = gold;
+    const m = buildKartModel(color, gold);
+    this.group = m.group; this.wheels = m.wheels; this.fronts = m.fronts;
+    this.pos = new THREE.Vector3(x, game.world.heightAt(x, z), z);
+    this.yaw = yaw; this.speed = 0; this.steer = 0; this.spin = 0;
+    this.sparkT = 0; this.bumpT = 0;
+    this.normal = new THREE.Vector3(0, 1, 0);
+    game.scene.add(this.group);
+    this.place();
+  }
+
+  get maxSpeed() { return this.gold ? 30 : 22; }
+
+  seatWorld(v = new THREE.Vector3()) { return this.group.localToWorld(v.copy(SEAT)); }
+
+  // input: the Input object while someone is driving, otherwise null
+  update(dt, input) {
+    const g = this.game, world = g.world;
+    let thr = 0, steer = 0, brake = false;
+    if (input) {
+      if (input.down('KeyW') || input.down('ArrowUp')) thr += 1;
+      if (input.down('KeyS') || input.down('ArrowDown')) thr -= 1;
+      if (input.down('KeyA') || input.down('ArrowLeft')) steer += 1;
+      if (input.down('KeyD') || input.down('ArrowRight')) steer -= 1;
+      brake = input.down('Space');
+    }
+    const ground = world.heightAt(this.pos.x, this.pos.z);
+    const water = waterLevelAt(this.pos.x, this.pos.z, out) - ground;
+    const flooded = water > 0.6;
+    let max = this.maxSpeed * (flooded ? 0.18 : 1);
+    if (thr > 0) this.speed += (this.gold ? 18 : 14) * dt;
+    else if (thr < 0) this.speed -= (this.speed > 0 ? 28 : 9) * dt;
+    else this.speed *= Math.exp(-0.9 * dt);
+    if (brake) this.speed *= Math.exp(-4 * dt);
+    // hills slow you down going up and speed you up going down
+    const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+    const slope = (world.heightAt(this.pos.x + fx, this.pos.z + fz) - world.heightAt(this.pos.x - fx, this.pos.z - fz)) / 2;
+    this.speed -= slope * 9 * dt;
+    this.speed = clamp(this.speed, -8, max);
+    this.steer += (steer - this.steer) * Math.min(1, dt * 8);
+    this.yaw += this.steer * 2.1 * dt * clamp(this.speed / 7, -1, 1);
+
+    this.pos.x += fx * this.speed * dt;
+    this.pos.z += fz * this.speed * dt;
+    // floodwater carries karts away
+    if (TSU.on && water > 0.4) {
+      const push = out.crest * 12 + Math.min(water, 4);
+      this.pos.x += TSU.dirX * push * dt; this.pos.z += TSU.dirZ * push * dt;
+    }
+    // don't drive into deep sea, bump off buildings
+    if (world.heightAt(this.pos.x, this.pos.z) < -1.2 && !flooded) { this.pos.x -= fx * this.speed * dt * 1.5; this.pos.z -= fz * this.speed * dt * 1.5; this.speed *= -0.2; }
+    const bx = this.pos.x, bz = this.pos.z;
+    g.structures.resolveCollision(this.pos, 1.3);
+    if (Math.hypot(this.pos.x - bx, this.pos.z - bz) > 0.01) {
+      if (Math.abs(this.speed) > 6 && this.bumpT <= 0) { g.audio.play('thud', { x: this.pos.x, z: this.pos.z }); this.bumpT = 0.5; }
+      this.speed *= 0.4;
+    }
+    this.bumpT -= dt;
+    const r = Math.hypot(this.pos.x, this.pos.z);
+    if (r > 300) { this.pos.x *= 300 / r; this.pos.z *= 300 / r; this.speed *= 0.5; }
+
+    this.pos.y = world.heightAt(this.pos.x, this.pos.z);
+    this.place();
+    this.spin += this.speed * dt / 0.28;
+    for (const w of this.wheels) w.children[0].rotation.x = this.spin;
+    for (const f of this.fronts) f.rotation.y = this.steer * 0.45;
+    if (input && Math.abs(this.speed) > 8 && (this.sparkT -= dt) <= 0) {
+      this.sparkT = this.gold ? 0.03 : 0.08;
+      const bx2 = this.pos.x - fx * 1.3, bz2 = this.pos.z - fz * 1.3;
+      if (this.gold) g.fx.emit('spark', bx2, this.pos.y + 0.6, bz2, 2, 0.6, '#ffd34d');
+      else g.fx.emit('dust', bx2, this.pos.y + 0.2, bz2, 1, 0.5);
+    }
+  }
+
+  place() {
+    const world = this.game.world, x = this.pos.x, z = this.pos.z;
+    const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+    const pitch = Math.atan2(world.heightAt(x + fx, z + fz) - world.heightAt(x - fx, z - fz), 2);
+    // left of the kart is (fz, -fx); a higher left side rolls it towards +z rotation
+    const roll = Math.atan2(world.heightAt(x + fz * 0.8, z - fx * 0.8) - world.heightAt(x - fz * 0.8, z + fx * 0.8), 1.6);
+    this.group.position.copy(this.pos);
+    this.group.rotation.set(-pitch, this.yaw, roll, 'YXZ');
+    this.group.updateMatrixWorld();
+  }
+
+  dispose() {
+    this.game.scene.remove(this.group);
+    this.group.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+  }
+}
+
+class KartManager {
+  constructor(game) { this.game = game; this.list = []; }
+
+  // Find a free spot next to the player.
+  spawnNear(color, gold) {
+    const g = this.game, p = g.player, yaw = g.cam.yaw + Math.PI;
+    for (const [ang, dist] of [[0, 4.5], [0.6, 4.5], [-0.6, 4.5], [Math.PI / 2, 4], [-Math.PI / 2, 4], [0, 8], [Math.PI, 4]]) {
+      const a = yaw + ang, x = p.pos.x + Math.sin(a) * dist, z = p.pos.z + Math.cos(a) * dist;
+      if (g.world.heightAt(x, z) < 0.6) continue;
+      if (g.structures.list.some((s) => s.alive && s.contains(x, z, 1.4))) continue;
+      if (this.list.some((k) => Math.hypot(k.pos.x - x, k.pos.z - z) < 2.6)) continue;
+      return this.add(color, gold, x, z, yaw);
+    }
+    return this.add(color, gold, p.pos.x + 2, p.pos.z + 2, yaw);
+  }
+
+  add(color, gold, x, z, yaw) {
+    const k = new Kart(this.game, color, gold, x, z, yaw);
+    this.list.push(k);
+    return k;
+  }
+
+  buy() {
+    const g = this.game;
+    if (this.list.filter((k) => !k.gold).length >= MAX_KARTS) { g.audio.play('error'); g.ui.toast(`You already own ${MAX_KARTS} go-karts. That's the limit!`); return null; }
+    if (!g.economy.spend(KART_PRICE)) { g.audio.play('error'); g.ui.toast(`A go-kart costs ${KART_PRICE} coins.`); return null; }
+    const k = this.spawnNear(randomKartColor(), false);
+    g.audio.play('buy');
+    g.fx.emit('dust', k.pos.x, k.pos.y, k.pos.z, 14, 2);
+    g.ui.toast('🏎 New go-kart delivered! Walk up to it and press E to drive.');
+    g.save();
+    return k;
+  }
+
+  giveGold() {
+    const g = this.game;
+    const k = this.spawnNear(GOLD_COLOR, true);
+    g.audio.play('correct');
+    g.fx.emit('spark', k.pos.x, k.pos.y + 1, k.pos.z, 40, 2.5, '#ffd34d');
+    g.ui.toast('🏆 Your Gold Go-Kart is here! It\'s the fastest kart on the island. Press E next to it to drive.');
+    g.save();
+    return k;
+  }
+
+  nearest(x, z, maxDist) {
+    let best = null, bd = maxDist;
+    for (const k of this.list) {
+      const d = Math.hypot(k.pos.x - x, k.pos.z - z);
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
+  }
+
+  update(dt) {
+    const driving = this.game.player.vehicle;
+    for (const k of this.list) if (k !== driving) k.update(dt, null);
+  }
+
+  clear() { for (const k of this.list) k.dispose(); this.list = []; }
+
+  serialize() { return this.list.map((k) => ({ c: k.color, g: k.gold ? 1 : 0, x: +k.pos.x.toFixed(2), z: +k.pos.z.toFixed(2), y: +k.yaw.toFixed(3) })); }
+  load(arr) { for (const d of arr || []) this.add(d.c, !!d.g, d.x, d.z, d.y || 0); }
+}
+
+return { KART_PRICE, GOLD_COLOR, randomKartColor, buildKartModel, Kart, KartManager };
+})();
+
 // ===== src/ui.js =====
 __m['src/ui.js'] = (() => {
 // All DOM user interface: HUD, shop, quiz panel, news alerts, structure health bars, minimap and menus.
 
 const { STRUCTURES } = __m['src/config.js'];
 const { buildStructure } = __m['src/buildings.js'];
+const { buildKartModel, randomKartColor, KART_PRICE } = __m['src/karts.js'];
 const { TSU, tsunamiAt } = __m['src/water.js'];
 
 const $ = (id) => document.getElementById(id);
@@ -58426,6 +58734,21 @@ class UI {
         </div>`;
       grid.appendChild(card);
     });
+    // vehicles
+    const kartCard = document.createElement('div');
+    kartCard.className = 'card kart-card';
+    kartCard.innerHTML = `
+      <div class="card-img"><img src="${previews[STRUCTURES.length]}" alt="Go-Kart"><span class="price">🪙 ${KART_PRICE}</span></div>
+      <div class="card-body">
+        <h3>🏎 Go-Kart</h3>
+        <div class="stats"><span>🎨 Random colour</span><span>⚡ 80 km/h</span></div>
+        <p class="desc">A zippy little kart for racing around the island. Every kart comes in a surprise colour.</p>
+        <p class="pro">✔ Get to high ground fast when the tsunami warning sounds. Great for grabbing sky coins.</p>
+        <p class="con">✖ No protection at all, and floodwater will sweep it (and you) away.</p>
+        <div class="card-foot"><span class="owned" id="karts-owned"></span><button class="btn buy" id="buy-kart">Buy Go-Kart</button></div>
+      </div>`;
+    grid.prepend(kartCard);
+    $('buy-kart').onclick = () => { if (this.game.karts.buy()) this.toggleShop(false); this.refreshShop(); };
     grid.querySelectorAll('[data-buy]').forEach((b) => {
       b.onclick = () => {
         const def = STRUCTURES.find((d) => d.id === b.dataset.buy);
@@ -58451,6 +58774,13 @@ class UI {
       b.classList.toggle('disabled', coins < def.price);
       b.textContent = coins < def.price ? `Need ${fmt(def.price - coins)} more` : 'Buy & Place';
     });
+    const kb = $('buy-kart');
+    if (kb) {
+      kb.classList.toggle('disabled', coins < KART_PRICE);
+      kb.textContent = coins < KART_PRICE ? `Need ${fmt(KART_PRICE - coins)} more` : 'Buy Go-Kart';
+      const n = this.game.karts.list.length;
+      $('karts-owned').textContent = n ? `${n} owned` : '';
+    }
     document.querySelectorAll('[data-owned]').forEach((el) => {
       const n = this.game.structures.alive.filter((s) => s.def.id === el.dataset.owned).length;
       el.textContent = n ? `${n} placed` : '';
@@ -58582,7 +58912,7 @@ class UI {
         cls = dis.timer <= 10 ? 'alert' : 'calm';
         break;
       case 'quake':
-        title = `EARTHQUAKE · M${dis.mainM.toFixed(1)}`; timer = 'Take cover!'; sub = 'Get inside a strong shelter, away from falling debris'; cls = 'quake'; break;
+        title = `EARTHQUAKE · M${dis.mainM.toFixed(1)}`; timer = `Shaking: ${fmtTime(dis.timer)} left`; sub = 'Take cover in a strong shelter, away from falling debris. A tsunami follows!'; cls = 'quake'; break;
       case 'warning':
         title = 'TSUNAMI WARNING'; timer = `Wave hits in ${fmtTime(dis.timer)}`;
         sub = `Wave from the ${compassOf(-TSU.dirX, -TSU.dirZ)} · about ${Math.round(dis.tsunamiH)} m high`; cls = 'tsunami'; break;
@@ -58709,6 +59039,17 @@ class UI {
       ctx.strokeStyle = '#000'; ctx.lineWidth = 0.8; ctx.strokeRect(-w / 2, -d / 2, w, d);
       ctx.restore();
     }
+    // sky coins and go-karts
+    for (const c of g.skyCoins.list) {
+      const [cx, cy] = toPx(c.x, c.z);
+      ctx.fillStyle = c.value > 5 ? '#7dffcf' : '#ffd34d';
+      ctx.fillRect(cx - 1.5, cy - 1.5, 3, 3);
+    }
+    for (const k of g.karts.list) {
+      const [kx, ky] = toPx(k.pos.x, k.pos.z);
+      ctx.fillStyle = k.color; ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+      ctx.fillRect(kx - 3, ky - 3, 6, 6); ctx.strokeRect(kx - 3, ky - 3, 6, 6);
+    }
     // other players online
     if (g.online) for (const r of g.net.remotes.values()) {
       const [rx, ry] = toPx(r.group.position.x, r.group.position.z);
@@ -58739,9 +59080,16 @@ async function renderPreviews(progress) {
   scene.add(ground);
   const cam = new THREE.PerspectiveCamera(35, W / H, 0.1, 500);
   const out = [];
-  for (const [i, def] of STRUCTURES.entries()) {
-    await progress(0.74 + 0.18 * (i / STRUCTURES.length), `Building shop previews (${i + 1}/${STRUCTURES.length})…`);
-    const g = buildStructure(def);
+  // the structures, then a row of three go-karts in different random colours
+  const builders = STRUCTURES.map((def) => () => buildStructure(def));
+  builders.push(() => {
+    const g = new THREE.Group();
+    [-1.9, 0, 1.9].forEach((x, i) => { const k = buildKartModel(randomKartColor()).group; k.position.set(x, 0, i === 1 ? 0.8 : 0); g.add(k); });
+    return g;
+  });
+  for (const [i, build] of builders.entries()) {
+    await progress(0.74 + 0.18 * (i / builders.length), `Building shop previews (${i + 1}/${builders.length})…`);
+    const g = build();
     g.rotation.y = -0.6;
     scene.add(g);
     const box = new THREE.Box3().setFromObject(g);
@@ -58833,6 +59181,7 @@ __m['src/net.js'] = (() => {
 //    Guests send repair intents to the host. Coins, quizzes and health are personal and stay on each client.
 //  • No server script is needed: disasters aren't twitch gameplay, so the host round trip is fine.
 const { buildCharacter } = __m['src/player.js'];
+const { buildKartModel } = __m['src/karts.js'];
 const { STRUCTURE_BY_ID } = __m['src/config.js'];
 
 // Online multiplayer config, kept in one place. The game key is a public client key, so it's fine in client code.
@@ -58943,7 +59292,12 @@ class Net {
 
   myData() {
     const p = this.game.player;
-    return { x: r2(p.pos.x), y: r2(p.pos.y), z: r2(p.pos.z), h: r2(p.yaw), sp: r2(Math.hypot(p.vel.x, p.vel.z)), sw: p.swimming ? 1 : 0, sh: p.shelter ? p.shelter.uid : '', a: p.alive ? 1 : 0, hp: Math.ceil(p.hp) };
+    const k = p.vehicle;
+    return {
+      x: r2(p.pos.x), y: r2(p.pos.y), z: r2(p.pos.z), h: r2(p.yaw), sp: k ? 0 : r2(Math.hypot(p.vel.x, p.vel.z)), sw: p.swimming ? 1 : 0,
+      sh: p.shelter ? p.shelter.uid : '', a: p.alive ? 1 : 0, hp: Math.ceil(p.hp),
+      k: k ? k.color : '', kg: k && k.gold ? 1 : 0, // go-kart being driven (colour, gold)
+    };
   }
 
   // kind: 'quick' | 'create' | 'join'
@@ -59123,10 +59477,22 @@ class Net {
     r.group.visible = visible;
     r.group.position.set(x, y, z);
     r.group.rotation.set(d.a === 0 ? Math.PI / 2 : 0, r.yaw, 0);
+    // their go-kart, if they're driving one
+    const kartKey = d.k ? d.k + (d.kg ? '*' : '') : '';
+    if (r.kartKey !== kartKey) {
+      if (r.kart) { this.game.scene.remove(r.kart); r.kart = null; }
+      if (kartKey) { r.kart = buildKartModel(d.k, !!d.kg).group; this.game.scene.add(r.kart); }
+      r.kartKey = kartKey;
+    }
+    if (r.kart) {
+      r.kart.position.set(x + Math.sin(r.yaw) * 0.25, y + 0.3, z + Math.cos(r.yaw) * 0.25);
+      r.kart.rotation.set(0, r.yaw, 0);
+    }
     r.phase += dt * (d.sp || 0) * 1.6;
     const sw = Math.min(1.2, (d.sp || 0) / 6) * 0.7, a = Math.sin(r.phase) * sw;
     r.legs[0].rotation.x = a; r.legs[1].rotation.x = -a;
-    if (d.sw) { r.arms[0].rotation.x = Math.sin(r.phase * 1.5 + 1) * 1.6 - 1.2; r.arms[1].rotation.x = Math.sin(r.phase * 1.5 + 4) * 1.6 - 1.2; }
+    if (r.kart) { r.legs[0].rotation.x = r.legs[1].rotation.x = -1.45; r.arms[0].rotation.x = r.arms[1].rotation.x = -1.0; }
+    else if (d.sw) { r.arms[0].rotation.x = Math.sin(r.phase * 1.5 + 1) * 1.6 - 1.2; r.arms[1].rotation.x = Math.sin(r.phase * 1.5 + 4) * 1.6 - 1.2; }
     else { r.arms[0].rotation.x = -a; r.arms[1].rotation.x = a; }
     // name tag
     const cam = this.game.camera, v = r.group.position.clone();
@@ -59147,6 +59513,7 @@ class Net {
     const r = this.remotes.get(id);
     if (!r) return;
     this.game.scene.remove(r.group);
+    if (r.kart) this.game.scene.remove(r.kart);
     r.tag.remove();
     this.remotes.delete(id);
   }
@@ -59252,6 +59619,98 @@ class Net {
 return { MP_CFG, errText, Net };
 })();
 
+// ===== src/coins.js =====
+__m['src/coins.js'] = (() => {
+// Coins that fall from the sky around the player. Walk (or drive) into them to collect them.
+// Each falling coin casts a shadow so you can see where it will land. Floodwater washes landed coins away.
+// Online, every player gets their own sky coins (coins are personal).
+
+const { tsunamiAt } = __m['src/water.js'];
+const { rand } = __m['src/noise.js'];
+
+const MAX_COINS = 24;
+const SMALL = 5, BIG = 25;
+
+class SkyCoins {
+  constructor(game) {
+    this.game = game;
+    this.list = [];
+    this.timer = 3;
+    this.geo = new THREE.CylinderGeometry(0.5, 0.5, 0.1, 22);
+    this.geo.rotateX(Math.PI / 2);
+    this.mat = new THREE.MeshStandardMaterial({ color: '#ffcf33', metalness: 0.9, roughness: 0.25, emissive: '#b37800', emissiveIntensity: 0.45 });
+    this.bigMat = new THREE.MeshStandardMaterial({ color: '#7dffcf', metalness: 0.8, roughness: 0.2, emissive: '#00a070', emissiveIntensity: 0.6 });
+    this.shadowGeo = new THREE.CircleGeometry(0.6, 16).rotateX(-Math.PI / 2);
+    this.shadowMat = new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 });
+  }
+
+  spawn() {
+    const g = this.game, p = g.player.pos;
+    for (let tries = 0; tries < 6; tries++) {
+      const a = rand(0, Math.PI * 2), r = rand(6, 38);
+      const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
+      const h = g.world.heightAt(x, z);
+      if (h < 0.8 || Math.hypot(x, z) > 290) continue;
+      if (g.structures.list.some((s) => s.alive && s.contains(x, z, 0.5))) continue;
+      const big = Math.random() < 0.1;
+      const m = new THREE.Mesh(this.geo, big ? this.bigMat : this.mat);
+      m.castShadow = true;
+      if (big) m.scale.setScalar(1.5);
+      m.position.set(x, h + rand(40, 55), z);
+      const sh = new THREE.Mesh(this.shadowGeo, this.shadowMat);
+      sh.position.set(x, h + 0.05, z);
+      g.scene.add(m, sh);
+      this.list.push({ m, sh, x, z, h, vy: -rand(8, 12), landed: false, life: 60, value: big ? BIG : SMALL, spin: rand(0, 6), sparkT: 0 });
+      return;
+    }
+  }
+
+  remove(i) {
+    const c = this.list[i];
+    this.game.scene.remove(c.m, c.sh);
+    this.list.splice(i, 1);
+  }
+
+  update(dt) {
+    const g = this.game, pl = g.player;
+    if ((this.timer -= dt) <= 0) {
+      this.timer = rand(2.5, 5);
+      if (this.list.length < MAX_COINS) this.spawn();
+    }
+    const reach = pl.vehicle ? 2.6 : 1.7;
+    const px = pl.vehicle ? pl.vehicle.pos.x : pl.pos.x, pz = pl.vehicle ? pl.vehicle.pos.z : pl.pos.z;
+    for (let i = this.list.length - 1; i >= 0; i--) {
+      const c = this.list[i];
+      c.spin += dt * (c.landed ? 3 : 9);
+      c.m.rotation.y = c.spin;
+      if (!c.landed) {
+        c.m.position.y += c.vy * dt;
+        c.sh.scale.setScalar(Math.max(0.3, 1.4 - (c.m.position.y - c.h) / 40));
+        if ((c.sparkT -= dt) <= 0) { c.sparkT = 0.15; g.fx.emit('spark', c.m.position.x, c.m.position.y + 0.6, c.m.position.z, 1, 0.3); }
+        if (c.m.position.y <= c.h + 0.8) { c.landed = true; c.m.position.y = c.h + 0.8; g.fx.emit('spark', c.x, c.h + 0.6, c.z, 6, 0.6); }
+      } else {
+        c.life -= dt;
+        c.m.position.y = c.h + 0.8 + Math.sin(c.spin * 0.7) * 0.15;
+        c.m.visible = c.life > 8 || Math.sin(c.life * 12) > 0;
+        // floodwater washes coins away
+        if (tsunamiAt(c.x, c.z) > c.h + 0.3) c.life = 0;
+      }
+      if (pl.alive && g.state === 'playing' && Math.hypot(px - c.x, pz - c.z) < reach && Math.abs(pl.pos.y + 1 - c.m.position.y) < 3.5) {
+        g.economy.add(c.value, c.value === BIG ? 'Big sky coin!' : 'Sky coin');
+        g.fx.emit('spark', c.x, c.m.position.y, c.z, 14, 0.8, c.value === BIG ? '#7dffcf' : '#ffd34d');
+        this.remove(i);
+        continue;
+      }
+      if (c.life <= 0) this.remove(i);
+    }
+  }
+
+  clear() { while (this.list.length) this.remove(0); this.timer = 3; }
+}
+
+return { SkyCoins };
+})();
+
 // ===== src/main.js =====
 // Island Disaster Survival: game bootstrap, main loop, economy, camera, interaction and saving.
 
@@ -59268,6 +59727,8 @@ const { AudioSys } = __m['src/audio.js'];
 const { UI } = __m['src/ui.js'];
 const { Input } = __m['src/input.js'];
 const { Net } = __m['src/net.js'];
+const { KartManager } = __m['src/karts.js'];
+const { SkyCoins } = __m['src/coins.js'];
 const { clamp, smooth } = __m['src/noise.js'];
 const SAVE_KEY = 'ids_save_v1';
 const SETTINGS_KEY = 'ids_settings_v1';
@@ -59307,6 +59768,8 @@ game.player = new Player(game);
 game.disasters = new DisasterManager(game);
 game.quiz = new QuizManager(game);
 game.placement = new Placement(game);
+game.karts = new KartManager(game);
+game.skyCoins = new SkyCoins(game);
 game.input = new Input(canvas);
 game.ui = new UI(game);
 game.net = new Net(game);
@@ -59353,7 +59816,7 @@ game.save = () => {
   const data = {
     v: 1, coins: game.economy.coins, hp: Math.round(p.hp), x: p.pos.x, z: p.pos.z,
     round: d.round, prep: d.timer, quizTimer: game.quiz.timer, time: game.time,
-    structures: game.structures.serialize(), stats: game.stats, savedAt: Date.now(),
+    structures: game.structures.serialize(), karts: game.karts.serialize(), stats: game.stats, savedAt: Date.now(),
   };
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch { /* ignore */ }
 };
@@ -59367,6 +59830,10 @@ function refreshContinue() {
 // ---------------- game flow ----------------
 function resetWorld() {
   game.placement.cancel(true);
+  game.closeAdmin();
+  game.player.vehicle = null;
+  game.karts.clear();
+  game.skyCoins.clear();
   game.structures.clear();
   game.ui.clearBars();
   game.disasters.reset();
@@ -59411,6 +59878,7 @@ game.continueGame = () => {
     const def = STRUCTURE_BY_ID[st.id];
     if (def) game.structures.add(def, st.x, st.z, st.rot, clamp(st.hp, 1, def.maxHp));
   }
+  game.karts.load(s.karts);
   game.disasters.startRound(s.round, Math.max(15, s.prep));
   game.quiz.timer = clamp(s.quizTimer ?? BALANCE.quizInterval, 5, BALANCE.quizInterval);
   game.player.spawn(s.x, s.z);
@@ -59523,6 +59991,56 @@ game.dev = (cmd) => {
   }
 };
 
+// ---------------- admin panel (M key, password 2913) ----------------
+// Just a fun unlock, not real security: the password lives in the game's code.
+const ADMIN_PASSWORD = '2913';
+const adminEl = document.getElementById('admin');
+game.adminOpen = false;
+game.adminUnlocked = false;
+function renderAdmin() {
+  document.getElementById('admin-lock').classList.toggle('hidden', game.adminUnlocked);
+  document.getElementById('admin-tools').classList.toggle('hidden', !game.adminUnlocked);
+  document.getElementById('admin-error').textContent = '';
+}
+game.openAdmin = () => {
+  if (game.state !== 'playing') return;
+  game.adminOpen = true;
+  game.placement.cancel(true);
+  game.ui.toggleShop(false);
+  adminEl.classList.remove('hidden');
+  renderAdmin();
+  const pw = document.getElementById('admin-pw');
+  pw.value = '';
+  if (!game.adminUnlocked) setTimeout(() => pw.focus(), 0);
+};
+game.closeAdmin = () => {
+  game.adminOpen = false;
+  adminEl.classList.add('hidden');
+  document.getElementById('admin-pw').blur();
+};
+function tryAdminPassword() {
+  const pw = document.getElementById('admin-pw');
+  if (pw.value.trim() === ADMIN_PASSWORD) {
+    game.adminUnlocked = true;
+    renderAdmin();
+    pw.blur();
+    game.karts.giveGold();
+  } else {
+    game.audio.play('error');
+    document.getElementById('admin-error').textContent = 'Wrong password.';
+    adminEl.querySelector('.admin-card').classList.remove('shake'); void adminEl.offsetWidth;
+    adminEl.querySelector('.admin-card').classList.add('shake');
+    pw.select();
+  }
+}
+document.getElementById('admin-unlock').onclick = tryAdminPassword;
+document.getElementById('admin-pw').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') tryAdminPassword();
+  if (e.key === 'Escape') game.closeAdmin();
+});
+document.getElementById('admin-gold').onclick = () => { game.karts.giveGold(); game.closeAdmin(); };
+document.getElementById('admin-close').onclick = () => game.closeAdmin();
+
 document.addEventListener('visibilitychange', () => { if (document.hidden && game.state === 'playing' && !game.online) game.togglePause(true); });
 
 // ---------------- interaction ----------------
@@ -59533,8 +60051,10 @@ function handleInput(dt) {
   const { input, player, placement, quiz, ui } = game;
   const playing = game.state === 'playing';
 
+  if (input.pressed('KeyM') && playing) { game.adminOpen ? game.closeAdmin() : game.openAdmin(); }
   if (input.pressed('Escape')) {
-    if (placement.active) placement.cancel();
+    if (game.adminOpen) game.closeAdmin();
+    else if (placement.active) placement.cancel();
     else if (ui.shopOpen) ui.toggleShop(false);
     else if (!document.getElementById('howto').classList.contains('hidden')) document.getElementById('howto').classList.add('hidden');
     else game.togglePause();
@@ -59556,6 +60076,11 @@ function handleInput(dt) {
   }
 
   if (!player.alive) { ui.setPrompt(''); return; }
+  if (player.vehicle) {
+    ui.setPrompt(`<kbd>W</kbd><kbd>S</kbd> drive · <kbd>A</kbd><kbd>D</kbd> steer · <kbd>Space</kbd> brake · <kbd>E</kbd> get out${player.vehicle.gold ? ' · 🏆 Gold Go-Kart' : ''}`);
+    if (input.pressed('KeyE')) player.exitKart();
+    return;
+  }
   if (player.shelter) {
     const s = player.shelter;
     let txt = `<kbd>E</kbd> Leave ${s.def.name}`;
@@ -59563,6 +60088,12 @@ function handleInput(dt) {
     ui.setPrompt(txt);
     if (input.pressed('KeyE')) player.exit();
     if (input.pressed('KeyF')) tryRepair(s);
+    return;
+  }
+  const kart = game.karts.nearest(player.pos.x, player.pos.z, 2.6);
+  if (kart) {
+    ui.setPrompt(`<kbd>E</kbd> Drive ${kart.gold ? '🏆 Gold Go-Kart' : 'go-kart'}`);
+    if (input.pressed('KeyE')) player.enterKart(kart);
     return;
   }
   const s = game.structures.nearest(player.pos.x, player.pos.z, 2.5);
@@ -59610,8 +60141,16 @@ function updateCamera(dt, t) {
     cam.pitch = clamp(cam.pitch + input.mouse.dy * 0.004, -0.05, 1.4);
     cam.dist = clamp(cam.dist + input.mouse.wheel * 1.6, 4, 60);
   }
+  const k = player.vehicle;
+  if (k && Math.abs(k.speed) > 2 && !input.mouse.dragging) {
+    // swing the camera in behind a moving kart
+    let d = k.yaw + Math.PI - cam.yaw;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    cam.yaw += d * Math.min(1, dt * 2.5);
+  }
   const target = player.shelter && !player.shelter.def.open
     ? camTarget.set(player.shelter.x, player.shelter.topY() + 0.5, player.shelter.z)
+    : k ? camTarget.set(k.pos.x, k.pos.y + 1.6, k.pos.z)
     : camTarget.set(player.pos.x, player.pos.y + 1.6, player.pos.z);
   const cp = Math.cos(cam.pitch);
   camera.position.set(target.x + Math.sin(cam.yaw) * cp * cam.dist, target.y + Math.sin(cam.pitch) * cam.dist, target.z + Math.cos(cam.yaw) * cp * cam.dist);
@@ -59650,9 +60189,11 @@ function tick(dt, render) {
     game.time += game.state === 'playing' ? dt : 0;
     disasters.update(dt);
     if (game.state === 'playing' || game.state === 'dead') {
-      const canMove = game.state === 'playing' && !game.ui.shopOpen && !game.menuOpen;
+      const canMove = game.state === 'playing' && !game.ui.shopOpen && !game.menuOpen && !game.adminOpen;
       player.update(dt, input, game.cam.yaw, canMove);
     }
+    game.karts.update(dt);
+    if (game.state === 'playing') game.skyCoins.update(dt);
     if (game.online) game.net.tick(dt);
     if (game.state === 'playing' && player.alive) {
       // survival rewards
@@ -59692,6 +60233,7 @@ function tick(dt, render) {
       quake: title ? 0 : disasters.intensity,
       siren: !title && (disasters.phase === 'warning' || disasters.phase === 'tsunami') ? 1 : 0,
       rush: title ? 0 : rush,
+      engine: !title && player.vehicle ? Math.min(1, Math.abs(player.vehicle.speed) / player.vehicle.maxSpeed) : -1,
     });
   }
 
