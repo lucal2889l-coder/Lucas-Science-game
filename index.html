@@ -1240,7 +1240,7 @@ kbd { display: inline-block; padding: 0 5px; border-radius: 4px; background: rgb
 
   <div id="online" class="screen hidden">
     <div class="screen-card">
-      <div class="kicker">Online co-op · up to 4 players</div>
+      <div class="kicker">Online co-op · up to 60 players</div>
       <h2>👥 Play Online</h2>
       <p>Survive together on one island. Disasters and buildings are shared, so build shelters for each other! Coins, quizzes and health are your own.</p>
       <label class="mp-field">Your name <input id="mp-name" maxlength="16" autocomplete="off" spellcheck="false"></label>
@@ -59185,7 +59185,7 @@ const { buildKartModel } = __m['src/karts.js'];
 const { STRUCTURE_BY_ID } = __m['src/config.js'];
 
 // Online multiplayer config, kept in one place. The game key is a public client key, so it's fine in client code.
-const MP_CFG = { url: 'https://mp.zdstudios.network', key: 'pk_DJn7nwAw_faH3eB120rE3rP0', game: 'Island Disaster Survival', tag: 'ids-coop', maxPlayers: 4 };
+const MP_CFG = { url: 'https://mp.zdstudios.network', key: 'pk_DJn7nwAw_faH3eB120rE3rP0', game: 'Island Disaster Survival', tag: 'ids-coop', maxPlayers: 60 };
 const PREFS_KEY = 'ids_mp_v1';
 const VESTS = ['#3fa9f5', '#b05cff', '#2ecc71', '#ff5c8a', '#f5d63f', '#ffffff'];
 const r2 = (v) => Math.round(v * 100) / 100;
